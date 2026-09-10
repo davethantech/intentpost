@@ -1,0 +1,3 @@
+const db=require("../db"),crypto=require("crypto"),{recompute}=require("./intentGraph");
+async function ingest({organizationId,accountId,contactId,signalType,signalName,strength=0,payload={}}){const row={id:crypto.randomUUID(),organization_id:organizationId,account_id:accountId,contact_id:contactId,signal_type:signalType,signal_name:signalName,strength:Number(strength),payload,occurred_at:new Date().toISOString()};if(db.mode==="postgres")await db.query(`INSERT INTO signals(id,organization_id,account_id,contact_id,signal_type,signal_name,strength,payload,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,Object.values(row));else db.insert("signals",row);await recompute(accountId,organizationId);return row}
+module.exports={ingest};
