@@ -1,0 +1,6 @@
+const router=require("express").Router(),crypto=require("crypto"),db=require("../db"),{requireAuth}=require("../middleware/auth"),jobs=require("../services/jobQueue");
+router.use(requireAuth);
+router.get("/",async(req,res)=>{const rows=db.mode==="postgres"?(await db.query("SELECT * FROM campaigns WHERE organization_id=$1 ORDER BY created_at DESC",[req.user.organization_id])).rows:db.all("campaigns",x=>x.organization_id===req.user.organization_id);res.json(rows)});
+router.post("/",async(req,res)=>{const row={id:crypto.randomUUID(),organization_id:req.user.organization_id,name:req.body.name||"Untitled campaign",budget:Number(req.body.budget||0),spent:0,status:"draft"};if(db.mode==="postgres")await db.query("INSERT INTO campaigns(id,organization_id,name,budget,spent,status) VALUES($1,$2,$3,$4,$5,$6)",Object.values(row));else db.insert("campaigns",row);res.status(201).json(row)});
+router.post("/:id/launch",async(req,res)=>{const id=req.params.id;if(db.mode==="postgres")await db.query("UPDATE campaigns SET status='active' WHERE id=$1 AND organization_id=$2",[id,req.user.organization_id]);else{const c=db.first("campaigns",x=>x.id===id&&x.organization_id===req.user.organization_id);if(c)c.status="active"}res.status(202).json(await jobs.enqueue(req.user.organization_id,"JOB_RUN_DECISION_ENGINE",{campaignId:id}))});
+module.exports=router;
