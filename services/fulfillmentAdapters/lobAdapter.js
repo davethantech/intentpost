@@ -1,0 +1,1 @@
+module.exports={async send(){throw new Error("Lob adapter configured but LIVE provider credentials are not installed. Set LOB_API_KEY and implement provider contract before enabling live sends.")},async status(){throw new Error("Live Lob adapter unavailable")}};
