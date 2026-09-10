@@ -1,21 +1,81 @@
 # IntentPost Intelligence
 
-Enterprise revenue orchestration foundation: intent graph, AI decision engine, policy/suppression, async jobs, fulfillment adapters, attribution, and dashboard.
+Production-oriented revenue orchestration foundation for IntentPost / Mailin.ai.
 
-> This repository contains the enterprise foundation build. Live fulfillment remains disabled by default (`FULFILLMENT_PROVIDER=mock`).
+## What this build does
 
-## Run
+- Multi-tenant PostgreSQL data model with organization isolation
+- CRM/signal ingestion through authenticated, idempotent webhooks
+- Intent graph and explainable intent / physical-intervention scoring
+- Structured AI decisioning: `SEND`, `WAIT`, `DIGITAL_ONLY`, `DO_NOTHING`
+- Policy and suppression checks before physical outreach
+- Durable PostgreSQL-backed job queue with `FOR UPDATE SKIP LOCKED`, retries and backoff
+- Separate API and worker processes for horizontal scaling
+- AI decision audit trail
+- Fulfillment adapter architecture with mock-safe default
+- QR attribution from physical touch to downstream engagement
+- Rate limiting, secure JWT validation, security headers, CORS allow-listing and graceful shutdown
+- Docker production stack with PostgreSQL, migrations, API and worker
+
+## Production boundary
+
+This repository is structured for production deployment, but a real customer launch still requires environment-specific operational work: real CRM/provider credentials, a production fulfillment provider contract, domain/TLS configuration, backups/restore testing, monitoring/alerting, load testing and security review. Live physical fulfillment is deliberately disabled by default.
+
+## Run with Docker
+
+1. Copy `.env.example` to `.env`.
+2. Replace every `GENERATE_*` / `CHANGE_ME` value with real secrets.
+3. Set `CORS_ORIGINS` and `APP_BASE_URL` to the production application URL.
+4. Keep `FULFILLMENT_PROVIDER=mock` and `ENABLE_LIVE_FULFILLMENT=false` until the provider is configured and tested.
+5. Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+6. Verify:
+
+```bash
+curl http://127.0.0.1:3000/api/health
+curl http://127.0.0.1:3000/api/ready
+```
+
+## Direct Node deployment
+
+Requires Node 22+ and PostgreSQL 16+.
 
 ```bash
 npm install
 cp .env.example .env
 npm run migrate
-npm run seed
 npm start
 ```
 
-Health: `GET /api/health`
+Run the worker separately:
 
-## Production notes
+```bash
+npm run worker
+```
 
-Configure PostgreSQL, JWT secrets, OpenAI credentials, webhook HMAC secret, and a real fulfillment provider before production use. The included job queue and adapters are foundations and should be hardened/replaced with durable infrastructure for high-scale production.
+## Architecture
+
+`Internet -> HTTPS reverse proxy -> API -> PostgreSQL`
+
+`                         -> durable jobs -> Worker -> AI / CRM / fulfillment`
+
+Multiple API and worker instances can run against the same PostgreSQL database. Job claiming is transactionally serialized so two workers do not process the same queued job simultaneously.
+
+## OpenAI
+
+The default model is `gpt-5.6-luna`, selected for cost-sensitive/high-volume workloads. Change it with `OPENAI_MODEL` when a different supported model is appropriate.
+
+## Safety defaults
+
+- No in-process database fallback
+- No in-process job execution
+- No live fulfillment by default
+- No default production JWT secret
+- Webhooks require HMAC verification
+- Webhook events are idempotent
+- API requests are rate limited
+- Organization IDs are enforced on database queries
