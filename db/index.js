@@ -1,27 +1,47 @@
-const crypto = require("crypto");
+const { Pool } = require("pg");
 
-let pgPool = null;
-let mode = "memory";
-const memory = {
-  organizations: [], users: [], refresh_tokens: [], accounts: [], contacts: [], signals: [],
-  graph_edges: [], campaigns: [], touchpoints: [], suppressions: [], webhook_idempotency: [],
-  webhook_dlq: [], attribution_events: [], ai_decision_audits: [], jobs: []
-};
-function id(){return crypto.randomUUID()}
-async function init(){
-  if(process.env.DATABASE_URL||process.env.PGHOST){
-    try{const {Pool}=require("pg");pgPool=new Pool({connectionString:process.env.DATABASE_URL||undefined});await pgPool.query("SELECT 1");mode="postgres";return}catch(e){console.warn("PostgreSQL unavailable; using in-process fallback:",e.message)}
+let pool;
+
+function required(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+async function init() {
+  const connectionString = process.env.DATABASE_URL || `postgres://${required("PGUSER")}@${process.env.PGHOST || "127.0.0.1"}:${process.env.PGPORT || 5432}/${required("PGDATABASE")}`;
+  pool = new Pool({
+    connectionString,
+    password: process.env.PGPASSWORD,
+    max: Number(process.env.DB_POOL_MAX || 20),
+    idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
+    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 5000),
+    ssl: process.env.PGSSL === "true" ? { rejectUnauthorized: process.env.PGSSL_REJECT_UNAUTHORIZED !== "false" } : undefined,
+    application_name: "intentpost"
+  });
+  await pool.query("SELECT 1");
+}
+
+function query(sql, params = []) {
+  if (!pool) throw new Error("Database is not initialized");
+  return pool.query(sql, params);
+}
+
+async function transaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-  mode="memory";
 }
-async function query(sql,params=[]){if(mode!=="postgres")throw new Error("PostgreSQL is not active");return pgPool.query(sql,params)}
-function insert(table,row){if(!memory[table])memory[table]=[];memory[table].push(row);return row}
-function all(table,pred=()=>true){return (memory[table]||[]).filter(pred)}
-function first(table,pred=()=>true){return all(table,pred)[0]||null}
-async function migrate(){
-  if(mode!=="postgres")return;
-  const fs=require("fs"),path=require("path"),dir=path.join(__dirname,"migrations");
-  const files=fs.readdirSync(dir).filter(x=>x.endsWith(".sql")).sort();
-  for(const f of files)await query(fs.readFileSync(path.join(dir,f),"utf8"));
-}
-module.exports={init,get mode(){return mode},query,insert,all,first,migrate,id,memory};
+
+async function close() { if (pool) await pool.end(); }
+
+module.exports = { init, query, transaction, close, get pool() { return pool; } };
