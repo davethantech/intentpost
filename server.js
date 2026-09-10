@@ -1,0 +1,22 @@
+require("dotenv").config();
+const express=require("express"),cors=require("cors"),cookie=require("cookie-parser"),path=require("path");
+const db=require("./db"),jobs=require("./services/jobQueue"),ingest=require("./services/crmIngestion"),fulfill=require("./services/fulfillmentService");
+const {helmetLike,general,auth}=require("./middleware/security");
+const app=express(); app.use(helmetLike);app.use(cors());app.use(express.json({limit:"1mb"}));app.use(cookie());app.use(general);
+app.get("/api/health",(req,res)=>res.json({ok:true,provider:db.mode,openai:!!process.env.OPENAI_API_KEY,version:"2.0.0"}));
+app.use("/api/auth",auth,require("./routes/auth"));
+app.use("/api/webhooks",require("./routes/webhooks"));
+app.use("/api/graph",require("./routes/graph"));
+app.use("/api/ai",require("./routes/ai"));
+app.use("/api/campaigns",require("./routes/campaigns"));
+app.use("/api/fulfillment",require("./routes/fulfillment"));
+app.use("/",require("./routes/attribution"));
+app.use(express.static(path.join(__dirname,"public")));
+jobs.register("JOB_INGEST_SIGNAL",async p=>ingest.ingest(p));
+jobs.register("JOB_DISPATCH_FULFILLMENT",async p=>{
+ const get=async(table,id,org)=>db.mode==="postgres"?(await db.query(`SELECT * FROM ${table} WHERE id=$1 AND organization_id=$2`,[id,org])).rows[0]:db.first(table,x=>x.id===id&&x.organization_id===org);
+ const account=await get("accounts",p.accountId,p.organizationId),contact=await get("contacts",p.contactId,p.organizationId);
+ await fulfill.create({org:p.organizationId,campaignId:p.campaignId,account,contact,touchType:p.touchType,cost:p.cost,copy:p.copy});
+});
+const PORT=Number(process.env.PORT||3000);
+(async()=>{await db.init(); app.listen(PORT,()=>console.log(`IntentPost Intelligence listening on ${PORT}`));})().catch(e=>{console.error(e);process.exit(1)});
